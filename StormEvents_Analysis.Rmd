@@ -1,0 +1,200 @@
+---
+title: "US Weather Events and the Health & Economics Impacts"
+author: "Lefteris Nikolidakis"
+date: "October 26, 2014"
+output:
+  html_document:
+    fig_caption: yes
+    keep_md: yes
+---
+### Synopsis
+
+The target of this analysis is to find out which metereological events cause the most harmful effects for human health and have the greatest economic consequences in terms of property damage. For the research of given objectives the U.S. National Oceanic and Atmospheric Administration's storm database from the past 60 years was used. It turned out that tornado was the most harmful metereological event which caused over 90000 injuries in the last 60 years and floods had the greatest economic consequences with over 150 billion dollars in property damages.
+
+### Data Processing
+
+The analysis was performed on [Storm Events Database](http://www.ncdc.noaa.gov/stormevents/ftp.jsp), provided by National Climatic Data Center. The data for this analysis come in the form of a comma-separated-value file compressed via the bzip2 algorithm to reduce its size. You can download the file from the course web site:
+
+- [Storm Data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2) [47Mb]
+There is also some documentation of the database available. Here you will find how some of the variables are constructed/defined.
+
+- National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+
+- National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+The events in the database start in the year 1950 and end in November 2011. In the earlier years of the database there are generally fewer events recorded, most likely due to a lack of good records. More recent years should be considered more complete.  
+
+The first step is to read the data into a data frame:
+```{r}
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", 
+              destfile = "StormData.csv.bz2", method = "curl")
+
+StormData <- read.csv(bzfile("StormData.csv.bz2"))
+```
+Before the analysis, the data need some preprocessing. Event types don't have a specific format. For instance, there are events with types Frost/Freeze, FROST/FREEZE and FROST\\FREEZE which obviously refer to the same type of event.
+```{r}
+# translate all letters to lowercase
+EventTypes <- tolower(StormData$EVTYPE)
+# replace all punct. characters with a space
+EventTypes <- gsub(pattern = "[[:blank:][:punct:]+]", replacement = " ", x = EventTypes)
+#[:blank:]  Space and TAB characters only.
+#[:punct:]  Punctuation symbols . , " ' ? ! ; : # $ % & ( ) * + - / < > = @ [ ] \ ^ _ { } | ~
+#The plus sign + indicates there is one or more of the preceding element - blank and/or puct. 
+
+# update the data frame
+StormData$EVTYPE <- EventTypes
+```
+
+### Harmful Events with respect to Population Health
+
+To find the most harmful event types, the number of casualties are aggregated by the event type:
+
+```{r}
+library(plyr)
+casualties <- ddply(StormData, .(EVTYPE), summarize,
+                    fatalities = sum(FATALITIES),
+                    injuries = sum(INJURIES))
+head(casualties)
+#the empty ENVTYPE was '?' before.
+
+# Events that caused most death and injury
+FatalEvents <- head(casualties[order(casualties$fatalities, decreasing = T), ], 10)
+InjuryEvents <- head(casualties[order(casualties$injuries, decreasing = T), ], 10)
+```
+  
+Top 10 events that caused largest number of deaths:
+```{r}
+FatalEvents[, c("EVTYPE", "fatalities")]
+```
+Top 10 events that caused most number of injuries:
+```{r}
+InjuryEvents[, c("EVTYPE", "injuries")]
+```
+
+### Economic Consequences of Weather Events
+
+To analyze the Economical impact of the weather events, I will use the Property Damage and Crop Damage reportings.  
+In the raw data, the property damage is represented with two variables, the `PROPDMG` (dollars) and the exponent `PROPDMGEXP` (symbols indicating the power). Similarly, the crop damage is represented with `CROPDMG` and `CROPDMGEXP`.  
+The first step for this part of the analysis, is to calculate the property and crop damage for each event:
+```{r}
+names(StormData)
+head(StormData$PROPDMG)
+head(StormData$PROPDMGEXP)
+
+#transform the PROPDMG and CROPDMG according their correspoding exp value: 
+ExpTrans <- function(e) {
+  # h = hundred, k = thousand, m = million, b = billion, '' '-' '?' '+' = The raw number. 
+  if (e %in% c('h', 'H'))
+    return(2)
+  else if (e %in% c('k', 'K'))
+    return(3)
+  else if (e %in% c('m', 'M'))
+    return(6)
+  else if (e %in% c('b', 'B'))
+    return(9)
+  else if (!is.na(as.numeric(e))) # if a digit
+    return(as.numeric(e))
+  else if (e %in% c('', '-', '?', '+'))
+    return(0)
+  else {
+    stop("Invalid exponent value.")
+  }
+}
+
+PropDmg_TransExp <- sapply(StormData$PROPDMGEXP, FUN=ExpTrans)
+StormData$PropDmg_Trans <- StormData$PROPDMG * (10^PropDmg_TransExp)
+CropDmg_TransExp <- sapply(StormData$CROPDMGEXP, FUN=ExpTrans)
+StormData$CropDmg_Trans <- StormData$CROPDMG * (10^CropDmg_TransExp)
+```
+```{r}
+# Economic loss by event type
+library(plyr)
+EconLoss <- ddply(StormData, .(EVTYPE), summarize,
+                   PropDmg = sum(PropDmg_Trans),
+                   CropDmg = sum(CropDmg_Trans))
+#  Remove events that caused no economic damage
+EconLoss <- EconLoss[(EconLoss$PropDmg > 0 | EconLoss$CropDmg > 0), ]
+
+# Events that caused most crop and prop damage:
+PropDmg_events <- head(EconLoss[order(EconLoss$PropDmg, decreasing = T), ], 10)
+CropDmg_events <- head(EconLoss[order(EconLoss$CropDmg, decreasing = T), ], 10)
+```
+  
+The Top 10 events that caused most property damage (in dollars) are:
+```{r}
+PropDmg_events[, c("EVTYPE", "PropDmg")]
+```
+  
+Similarly, the events that caused biggest crop damage are
+```{r}
+CropDmg_events[, c("EVTYPE", "CropDmg")]
+```
+
+### Results
+#### Impact of weather events in Health
+The following plots show the top Harmful weather event types:
+```{r}
+library(ggplot2)
+library(gridExtra)
+
+p1 <- ggplot(data=FatalEvents,
+             aes(x=reorder(x=EVTYPE, X=fatalities), y=fatalities, 
+                 fill=fatalities, alpha=0.9, ymax = 5750)) +
+  geom_bar(stat="identity") +  # bars represent the y values.
+  geom_text(mapping = aes(label = round(fatalities)), hjust=-0.05, vjust=0.3, size = 3.5) +
+  # text's size not adjusted in graphs when knited html for unknown reason.
+  
+  coord_flip() +  # Flipped cartesian coordinates so that horizontal becomes vertical, 
+                  # and vertical, horizontal.
+  ylab("Total Number of Fatalities") +
+  xlab("Event Type") +
+theme(legend.position="none") # No legend on the right
+# reorder treats its first argument as a categorical variable, and reorders its levels 
+# based on the values of a second variable, usually numeric.
+
+p2 <- ggplot(data=InjuryEvents,
+             aes(x=reorder(EVTYPE, injuries), y=injuries, fill=injuries, alpha=0.9, 
+                 ymax = 96000)) +
+  geom_bar(stat="identity") +
+  geom_text(mapping = aes(label = round(injuries)), hjust=-0.05, vjust=0.3, size = 3.5) +
+  coord_flip() + 
+  ylab("Total Number of Injuries") +
+  xlab("Event Type") +
+  theme(legend.position="none")
+
+grid.arrange(p1, p2, main="Top deadly weather events in the US (1950-2011)")
+```
+  
+Tornadoes cause the most number of deaths and injuries among all event types. There are more than 5,000 deaths and more than 90,000 injuries in the last 60 years in US, due to tornadoes. The other event types that are most dangerous with respect to population health are excessive heat (approximately 2000 deaths and 5000 injuries ) and flash floods (approximately 1000 deaths and 5000 injuries).
+
+#### Impact of weather events in Economy
+  
+The following plot shows the most severe weather event types with respect to economic cost since 1950s:
+
+```{r}
+
+p1 <- ggplot(data=PropDmg_events,
+             aes(x=reorder(EVTYPE, PropDmg), y=log10(PropDmg), fill=PropDmg, alpha=0.7)) +
+  geom_bar(stat="identity") +
+  geom_text(mapping = aes(label = round(PropDmg)), hjust=1.025, vjust=0.3, size = 3.5) +
+  coord_flip() +
+  xlab("Event Type") +
+  ylab("Property Damage in dollars (log-scale)") +
+  theme(legend.position="none")
+
+p2 <- ggplot(data=CropDmg_events,
+             aes(x=reorder(EVTYPE, CropDmg), y=CropDmg, fill=CropDmg, alpha = 0.7, 
+                 ymax = 17000000000)) +
+  geom_bar(stat="identity") +
+  geom_text(mapping = aes(label = CropDmg), hjust=-0.04, vjust=0.3, size = 3.5) +
+  coord_flip() + 
+  xlab("Event Type") +
+  ylab("Crop Damage in dollars") + 
+  theme(legend.position="none")
+
+grid.arrange(p1, p2, main="Weather costs to the US economy (1950-2011)")
+```
+  
+Property damages are given in logarithmic scale due to large value ranges. The data shows that flash floods and thunderstorm winds result the largest property damages among weather-related natural diseasters (Note that, due to untidy nature of the available data, type `flood` and `flash flood` are separate values and should be merged for more accurate data-driven conclusions).
+
+The most severe weather event in terms of crop damage is drought. In the last half century, drought has caused more than 10 billion dollars damage. Other severe crop-damage-causing event types are floods and hails.
